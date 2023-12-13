@@ -6,6 +6,8 @@ from typing import List, Union, Callable
 from torch import cuda
 from tqdm import tqdm
 import time
+import cohere
+import numpy as np
 
 class WeaviateClient(Client):
     '''
@@ -34,6 +36,7 @@ class WeaviateClient(Client):
                  endpoint: str,
                  model_name_or_path: str='sentence-transformers/all-MiniLM-L6-v2',
                  openai_api_key: str=None,
+                 cohere_api_key: str=None,
                  **kwargs
                 ):
         auth_config = AuthApiKey(api_key=api_key)
@@ -42,11 +45,20 @@ class WeaviateClient(Client):
                          **kwargs)    
         self.model_name_or_path = model_name_or_path
         self.openai_model = False
-        if self.model_name_or_path == 'text-embedding-ada-002':
+        self.cohere_model = False
+
+        if self.model_name_or_path == 'Cohere-embed-english-v3.0':
+            if not cohere_api_key:
+                raise ValueError(f'Cohere API key must be provided to use this model: {self.model_name_or_path}')
+            self.model = cohere.Client(cohere_api_key)
+            self.cohere_model = True
+        
+        elif self.model_name_or_path == 'text-embedding-ada-002':
             if not openai_api_key:
                 raise ValueError(f'OpenAI API key must be provided to use this model: {self.model_name_or_path}')
             self.model = OpenAI(api_key=openai_api_key)
             self.openai_model = True
+
         else: 
             self.model = SentenceTransformer(self.model_name_or_path) if self.model_name_or_path else None
 
@@ -237,7 +249,12 @@ class WeaviateClient(Client):
         '''
         Creates embedding vector from text query.
         '''
-        return self.get_openai_embedding(query) if self.openai_model else self.model.encode(query, device=device).tolist()
+        if self.openai_model:
+            return self.get_openai_embedding(query) 
+        elif self.cohere_model:
+            return self.get_cohere_embedding(query) 
+        else:
+            self.model.encode(query, device=device).tolist()
     
     def get_openai_embedding(self, query: str) -> List[float]:
         '''
@@ -246,6 +263,18 @@ class WeaviateClient(Client):
         embedding = self.model.embeddings.create(input=query, model='text-embedding-ada-002').model_dump()
         if embedding:
             return embedding['data'][0]['embedding']
+        else:
+           raise ValueError(f'No embedding found for query: {query}')
+        
+    def get_cohere_embedding(self, query: str) -> List[float]:
+        '''
+        Gets embedding from Cohere API for query.
+        '''
+        embedding = self.model.embed(texts=query, input_type="search_document", model="embed-english-v3.0")
+        embedding = np.asarray(embedding)
+
+        if embedding:
+            return embedding
         else:
            raise ValueError(f'No embedding found for query: {query}')
         
