@@ -46,7 +46,7 @@ encodings = encoding_for_model('gpt-3.5-turbo-0613')
 # = get_encoding('gpt-3.5-turbo-0613')
 
 ## INDEX NAME  --> name of your class on Weaviate cluster
-class_name = "Impact_theory_minilmL6_256"
+class_name = "Impact_theory_minilm_256"
 
 ##############
 #  END CODE  #
