@@ -1,13 +1,13 @@
-from tiktoken import get_encoding
+from tiktoken import get_encoding, encoding_for_model
 from weaviate_interface import WeaviateClient
 from prompt_templates import question_answering_prompt_series, question_answering_system
 from openai_interface import GPT_Turbo
-from app_features import (load_data, convert_seconds, generate_prompt_series, 
-                          validate_token_threshold)
+from app_features import (convert_seconds, generate_prompt_series, search_result,
+                          validate_token_threshold, load_content_cache, load_data)
 from reranker import ReRanker
 from loguru import logger 
 import streamlit as st
-import css_templates
+from datetime import timedelta
 import sys
 import json
 import os
@@ -25,10 +25,7 @@ st.set_page_config(page_title="Impact Theory",
 ##############
 # START CODE #
 ##############
-#root folder on Google Colab is: /content/
-root_folder = '/content/drive/MyDrive/Corise/Vector_Search'
-data_file = 'impact_theory_data.json'
-data_path = os.path.join(root_folder, data_file)
+data_path = './data/impact_theory_data.json'
 
 # read env vars from local .env file
 api_key = os.environ['WEAVIATE_API_KEY']
@@ -59,8 +56,7 @@ data = load_data(data_path)
 guest_list = sorted(list(set([d['guest'] for d in data])))
 
 def main():
-    st.write(css_templates.load_css(), unsafe_allow_html=True)
-    
+        
     with st.sidebar:
         guest = st.selectbox('Select Guest', options=guest_list, index=None, placeholder='Select Guest')
 
@@ -73,84 +69,87 @@ def main():
         st.write('\n\n\n\n\n')
 
         if query:
-            ##############
-            # START CODE #
-            ##############
-
-            st.write('Hmmm...this app does not seem to be working yet.  Please check back later.')
             if guest:
-                st.write(f'However, it looks like you selected {guest} as a filter.')
+                st.write(f'It looks like you selected {guest} as a filter (It is ignored for now).')
             # make hybrid call to weaviate
             hybrid_response = retriever.hybrid_search(query, class_name)
             # rerank results
             ranked_response = reranker.rerank(hybrid_response, query, 3)
+
             # validate token count is below threshold
-            # valid_response = validate_token_threshold(ranked_response, 
-                                                    #    question_answering_prompt_series, 
-                                                    #    query=query,
-                                                    #    tokenizer= # variable from ENCODING,
-                                                    #    token_threshold=4000, 
-                                                    #    verbose=True)
-            ##############
-            #  END CODE  #
-            ##############
-
-            # # generate LLM prompt
-            # prompt = generate_prompt_series(base_prompt=question_answering_prompt_series, query=query, results=valid_response)
+            valid_response = validate_token_threshold(ranked_response,
+                                                      question_answering_prompt_series,
+                                                      query=query,
+                                                      tokenizer=encodings,
+                                                      token_threshold=4000,
+                                                      verbose=True)
             
-            # # prep for streaming response
-            # st.subheader("Response from Impact Theory (context)")
-            # with st.spinner('Generating Response...'):
-            #     st.markdown("----")
-            #     res_box = st.empty()
-            #     report = []
-            #     col_1, _ = st.columns([4, 3], gap='large')
-                
-            #     # execute chat call to LLM
-            #                  ##############
-            #                  # START CODE #
-            #                  ##############
-            #     
+            # prep for streaming response
+            st.subheader("Response from Impact Theory (context)")
+            with st.spinner('Generating Response...'):
+                st.markdown("----")
+                # creates container for LLM response
+                chat_container, response_box = [], st.empty()
 
-            #                  ##############
-            #                  #  END CODE  #
-            #                  ##############
-            #         try:
-            #             with res_box:
-            #                 report.append(resp.choices[0].delta.get('content', '\n'))
-            #                 result = "".join(report).strip()
-            #                 res_box.markdown(f'*{result}*')
+                # execute chat call to LLM
+                use_llm = True
+                resp = (get_answer(query, valid_response) if use_llm
+                        else  "Do not waste my time")
 
-            #         except Exception as e:
-            #             print(e)
-            #             continue
-            # ##############
-            # # START CODE #
-            # ##############
-            # st.subheader("Search Results")
-            # for i, hit in enumerate(valid_response):
-            #     col1, col2 = st.columns([7, 3], gap='large')
-            #     image = # get thumbnail_url
-            #     episode_url = # get episode_url
-            #     title = # get title
-            #     show_length = # get length
-            #     time_string = # convert show_length to readable time string
-            # ##############
-            # #  END CODE  #
-            # ##############
-            #     with col1:
-            #         st.write(css_templates.search_result(i=i, 
-            #                                         url=episode_url,
-            #                                         episode_num=i,
-            #                                         title=title,
-            #                                         content=hit['content'], 
-            #                                         length=time_string),
-            #                 unsafe_allow_html=True)
-            #         st.write('\n\n')
-            #     with col2:
-            #         # st.write(f"<a href={episode_url} <img src={image} width='200'></a>", 
-            #         #             unsafe_allow_html=True)
-            #         st.image(image, caption=title.split('|')[0], width=200, use_column_width=False)
+                try:
+                    # inserts chat stream from LLM
+                    with response_box:
+                        content = resp
+                        if content:
+                            chat_container.append(content)
+                            result = "".join(chat_container).strip()
+                            st.write(f'{result}')
+                except Exception as e:
+                    print(e)
+
+            st.subheader("Search Results")
+            for i, hit in enumerate(valid_response):
+                col1, col2 = st.columns([7, 3], gap='large')
+                image = hit['thumbnail_url'] # get thumbnail_url
+                episode_url = hit['episode_url'] # get episode_url
+                title = hit["title"] # get title
+                show_length = hit["length"] # get length
+                time_string = str(timedelta(seconds=show_length)) # convert show_length to readable time string
+
+                with col1:
+                    st.write(search_result(i=i,
+                                            url=episode_url,
+                                            guest=hit['guest'],
+                                            title=title,
+                                            content=hit['content'],
+                                            length=time_string),
+                                            unsafe_allow_html=True)
+                    st.write('\n\n')
+                with col2:
+                    #st.write(f"<a href={episode_url} <img src={image} width='200'></a>",
+                    #         unsafe_allow_html=True)
+                    #st.markdown(f"[![{title}]({image})]({episode_url})")
+                    # st.markdown(f'<a href="{episode_url}">'
+                    #            f'<img src={image} '
+                    #            f'caption={title.split("|")[0]} width=200, use_column_width=False />'
+                    #            f'</a>',
+                    #            unsafe_allow_html=True)
+
+                    st.image(image, caption=title.split('|')[0], width=200, use_column_width=False)
+
+
+def get_answer(query, valid_response):
+
+    # generate LLM prompt
+    prompt = generate_prompt_series(query=query,
+                                    results=valid_response)
+
+    return llm.get_chat_completion(prompt=prompt,
+                                   system_message='answer this question based on the podcast material',
+                                   temperature=0,
+                                   max_tokens=500,
+                                   stream=False,
+                                   show_response=False)
 
 if __name__ == '__main__':
     main()
