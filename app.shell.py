@@ -25,16 +25,31 @@ st.set_page_config(page_title="Impact Theory",
 ##############
 # START CODE #
 ##############
-data_path = './data/impact_theory_data.json'
-## RETRIEVER
+#root folder on Google Colab is: /content/
+root_folder = '/content/drive/MyDrive/Corise/Vector_Search'
+data_file = 'impact_theory_data.json'
+data_path = os.path.join(root_folder, data_file)
+
+# read env vars from local .env file
+api_key = os.environ['WEAVIATE_API_KEY']
+url = os.environ['WEAVIATE_ENDPOINT']
+openai_api_key = os.environ['OPENAI_API_KEY']
+
+#instantiate client
+retriever = WeaviateClient(api_key, url, 'sentence-transformers/all-MiniLM-L6-v2', openai_api_key)
 
 ## RERANKER
+reranker = ReRanker('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
-## LLM 
+## LLM  --> openai_interface.py
+llm = GPT_Turbo()
 
-## ENCODING
+## ENCODING  --> tiktoken library
+encodings = encoding_for_model('gpt-3.5-turbo-0613')
+# = get_encoding('gpt-3.5-turbo-0613')
 
-## INDEX NAME
+## INDEX NAME  --> name of your class on Weaviate cluster
+class_name = "Impact_theory_minilmL6_256"
 
 ##############
 #  END CODE  #
@@ -66,9 +81,9 @@ def main():
             if guest:
                 st.write(f'However, it looks like you selected {guest} as a filter.')
             # make hybrid call to weaviate
-            hybrid_response = None
+            hybrid_response = retriever.hybrid_search(query, class_name)
             # rerank results
-            ranked_response = None
+            ranked_response = reranker.rerank(hybrid_response, query, 3)
             # validate token count is below threshold
             # valid_response = validate_token_threshold(ranked_response, 
                                                     #    question_answering_prompt_series, 
